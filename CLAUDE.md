@@ -9,11 +9,13 @@ This document provides comprehensive information about the workflow-base package
 ## Key Features
 
 - **Multiple Trigger Types**: REST, Cron, Interval, and Workflow triggers
+- **🦕 Deno Sandbox Security**: Isolated worker execution with zero permissions (Deno only)
 - **Rock-solid Express Server**: Uncrashable server with comprehensive error handling
 - **Async Node Execution**: Full support for async/await patterns with `next()` function
 - **Parallel Execution**: Support for branching workflows and parallel processing
+- **Dual Runtime Support**: Works in both Node.js and Deno environments
 - **TypeScript Support**: Full type safety and IntelliSense support
-- **Comprehensive Testing**: 100% Jest test coverage
+- **Comprehensive Testing**: 100% Jest test coverage + Deno-specific tests
 - **Easy Integration**: Simple API for both programmatic and server usage
 
 ## Architecture
@@ -35,6 +37,12 @@ This document provides comprehensive information about the workflow-base package
    - Automatic route registration for REST triggers
    - Health check and monitoring endpoints
    - Uncrashable server with process-level error handling
+
+4. **🦕 Sandbox System** (Deno only)
+   - **SandboxManager** (`src/sandbox-manager.ts`) - Worker lifecycle management
+   - **WorkerProxy** (`src/worker-proxy.ts`) - Message passing between parent/worker
+   - **Worker** (`src/worker.ts`) - Isolated execution environment
+   - **RuntimeDetection** (`src/runtime.ts`) - Environment detection and validation
 
 ## API Reference
 
@@ -184,7 +192,65 @@ const parcalc = workflow.createWorkflow('parcalc', {
 });
 ```
 
-### 3. Scheduled Workflows
+### 3. 🦕 Deno Sandbox Workflow (Security-First)
+```typescript
+// Define functions available to sandboxed nodes
+const protectedFunctions = {
+  log: (...args: any[]) => console.log('[SANDBOX]', ...args),
+  math: {
+    square: (n: number) => n * n,
+    add: (a: number, b: number) => a + b,
+  },
+  database: {
+    query: async (sql: string) => {
+      // Controlled database access with validation
+      if (!sql.toLowerCase().startsWith('select')) {
+        throw new Error('Only SELECT queries allowed');
+      }
+      return await db.query(sql);
+    },
+  },
+};
+
+const secureWorkflow = workflow.createWorkflow('secure-calculation', {
+  nodes: [
+    {
+      name: 'start',
+      trigger: 'rest',
+      triggerOptions: { method: 'POST' },
+      function: async (input, next) => {
+        // Regular execution - no sandbox
+        const a = parseFloat(input.a) || 0;
+        const b = parseFloat(input.b) || 0;
+        await next('calculate', { a, b });
+      },
+    },
+    {
+      name: 'calculate',
+      trigger: 'workflow',
+      function: async (input, next) => {
+        // 🔒 This runs in isolated worker with ZERO permissions
+        // Cannot access file system, network, global variables, etc.
+        // Only functions in 'sandbox' array are available
+        
+        log('Processing calculation:', input.a, input.b);
+        const sum = math.add(input.a, input.b);
+        const squared = math.square(sum);
+        
+        // Store result in controlled database access
+        await database.query(`SELECT * FROM calculations LIMIT 1`);
+        
+        log('Calculation complete:', squared);
+        await next(next.SUCCESS, { result: squared });
+      },
+      sandbox: ['log', 'math.add', 'math.square', 'database.query'], // Whitelist
+    },
+  ],
+  protectedFunctions, // Provide controlled API to sandboxed nodes
+});
+```
+
+### 4. Scheduled Workflows
 ```javascript
 // Cron-based workflow (every 5 minutes)
 const cronWorkflow = workflow.createWorkflow('backup-job', {
@@ -256,11 +322,95 @@ Tests cover:
 ## Development Commands
 
 ```bash
-npm run build     # Compile TypeScript
-npm run dev       # Development mode with ts-node
-npm run lint      # Run ESLint
-npm start         # Start compiled version
+# Build and Test
+npm run build         # Compile TypeScript
+npm run dev           # Development mode with ts-node
+npm run lint          # Run ESLint
+npm start             # Start compiled version
+
+# Node.js Runtime
+npm test              # Run Node.js tests (Jest)
+npm run start:node    # Run Node.js compatibility example
+
+# 🦕 Deno Runtime (Requires Deno installation)
+npm run deno          # Run basic Deno sandbox example
+npm run deno:advanced # Run advanced sandbox with security features
+npm run test:deno     # Run Deno-specific sandbox tests
 ```
+
+## 🛡️ Sandbox Security Features (Deno Only)
+
+### Runtime Environment Detection
+The system automatically detects whether it's running in Node.js or Deno and adjusts behavior accordingly:
+
+```typescript
+import { detectRuntime } from 'workflow-base/runtime';
+
+const runtime = detectRuntime();
+console.log(runtime.isDeno); // true in Deno, false in Node.js
+console.log(runtime.isNode); // false in Deno, true in Node.js
+```
+
+### Sandbox Node Configuration
+
+```typescript
+{
+  name: 'secure-processing',
+  trigger: 'workflow',
+  function: async (input, next) => {
+    // This code runs with zero permissions in isolated worker
+    const result = await protectedAPI.process(input.data);
+    await logger.log('Processing complete');
+    await next(next.SUCCESS, { result });
+  },
+  sandbox: ['protectedAPI.process', 'logger.log'], // Function whitelist
+}
+```
+
+### Protected Functions System
+
+```typescript
+const protectedFunctions = {
+  // Simple functions
+  log: (...args) => console.log('[SECURE]', ...args),
+  
+  // Nested object APIs
+  database: {
+    query: async (sql) => {
+      // Add your own validation, rate limiting, etc.
+      if (!isValidQuery(sql)) throw new Error('Invalid query');
+      return await db.query(sql);
+    },
+    insert: async (table, data) => {
+      validateTable(table);
+      validateData(data);
+      return await db.insert(table, data);
+    },
+  },
+  
+  // HTTP with restrictions
+  http: {
+    get: async (url) => {
+      if (!isAllowedDomain(url)) throw new Error('Domain not allowed');
+      return await fetch(url);
+    },
+  },
+};
+```
+
+### Security Guarantees
+
+When running in Deno with sandbox nodes:
+
+- ✅ **Zero File System Access**: Sandboxed code cannot read/write files
+- ✅ **Zero Network Access**: No direct network calls possible
+- ✅ **Zero Environment Access**: No environment variables accessible
+- ✅ **Zero Process Access**: Cannot spawn processes or access system APIs
+- ✅ **Function Whitelisting**: Only explicitly allowed functions callable
+- ✅ **Memory Isolation**: Each worker has isolated memory space
+- ✅ **Crash Isolation**: Worker crashes don't affect main server
+- ✅ **Timeout Protection**: 10-second execution timeout per node
+- ✅ **Automatic Cleanup**: Workers terminated after execution
 
 ## File Structure
 
@@ -271,10 +421,23 @@ workflow-base/
 │   ├── types.ts              # TypeScript definitions
 │   ├── workflow-engine.ts    # Core workflow logic
 │   ├── trigger-manager.ts    # Scheduling and triggers
-│   └── server.ts             # Express server
-├── tests/                    # Jest test files
-├── examples/                 # Usage examples
+│   ├── server.ts             # Express server
+│   ├── runtime.ts            # 🦕 Runtime detection (Deno/Node.js)
+│   ├── sandbox-manager.ts    # 🦕 Sandbox worker management
+│   ├── worker-proxy.ts       # 🦕 Message passing system
+│   └── worker.ts             # 🦕 Isolated worker execution
+├── tests/
+│   ├── *.test.ts             # Jest test files (Node.js)
+│   └── deno/                 # 🦕 Deno-specific tests
+│       └── sandbox.test.ts   # Sandbox functionality tests
+├── examples/
+│   ├── *.js                  # Node.js examples
+│   └── deno/                 # 🦕 Deno examples
+│       ├── basic-deno.ts     # Simple sandbox workflow
+│       ├── advanced-sandbox.ts # Advanced security features
+│       └── node-compatibility.js # Node.js behavior demo
 ├── dist/                     # Compiled JavaScript (after build)
+├── deno.json                 # 🦕 Deno configuration
 └── package.json             # NPM package configuration
 ```
 
@@ -317,6 +480,15 @@ workflow-base/
 Set `NODE_ENV=development` for verbose error messages and stack traces.
 
 ## Version History
+
+- **1.1.0**: 🦕 Deno Sandbox Security Release
+  - Added secure isolated worker execution for Deno runtime
+  - Implemented zero-permission sandbox nodes
+  - Added protected functions proxy system with message passing
+  - Created comprehensive Deno examples and tests
+  - Added runtime detection and dual environment support
+  - Parallel execution coordination with sandbox nodes
+  - Automatic worker lifecycle management
 
 - **1.0.0**: Initial release with core functionality
   - REST, Cron, Interval, and Workflow triggers

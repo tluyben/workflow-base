@@ -7,10 +7,14 @@ import {
   ExecutionContext,
   WorkflowResult,
 } from './types';
+import { SandboxManager } from './sandbox-manager';
+import { detectRuntime, logRuntime } from './runtime';
 
 export class WorkflowEngine extends EventEmitter {
   private workflows: Map<string, WorkflowDefinition> = new Map();
   private runningExecutions: Map<string, ExecutionContext> = new Map();
+  private sandboxManager: SandboxManager | null = null;
+  private runtime = detectRuntime();
 
   createWorkflow(name: string, definition: Omit<WorkflowDefinition, 'name'>): WorkflowDefinition {
     const workflow: WorkflowDefinition = {
@@ -19,6 +23,7 @@ export class WorkflowEngine extends EventEmitter {
     };
 
     this.validateWorkflow(workflow);
+    this.validateSandboxConfiguration(workflow);
     this.workflows.set(name, workflow);
     
     return workflow;
@@ -40,6 +45,24 @@ export class WorkflowEngine extends EventEmitter {
         throw new Error(`Workflow '${workflow.name}' has duplicate node name: '${node.name}'`);
       }
       nodeNames.add(node.name);
+    }
+  }
+
+  private validateSandboxConfiguration(workflow: WorkflowDefinition): void {
+    const hasSandboxNodes = workflow.nodes.some(node => node.sandbox && node.sandbox.length > 0);
+    
+    if (hasSandboxNodes) {
+      // Initialize sandbox manager if we have sandboxed nodes
+      if (!this.sandboxManager) {
+        this.sandboxManager = new SandboxManager(workflow.protectedFunctions || {});
+      }
+      
+      // Validate sandbox support
+      this.sandboxManager.validateWorkflowSandboxSupport(workflow.nodes);
+      this.sandboxManager.validateSandboxFunctions(workflow.nodes, workflow.protectedFunctions || {});
+      
+      logRuntime(this.runtime);
+      console.log(`🛡️ Sandbox validation passed for workflow '${workflow.name}'`);
     }
   }
 
@@ -105,6 +128,11 @@ export class WorkflowEngine extends EventEmitter {
     }
 
     const newExecutionPath = [...executionPath, nodeName];
+    
+    // Check if this is a sandboxed node
+    if (node.sandbox && node.sandbox.length > 0) {
+      return await this.executeSandboxedNode(workflow, node, input, newExecutionPath);
+    }
     
     // Track all next() calls made during node execution
     const nextCalls: { targetNode: string; data: any }[] = [];
@@ -248,6 +276,78 @@ export class WorkflowEngine extends EventEmitter {
     return finalResults;
   }
 
+  private async executeSandboxedNode(
+    workflow: WorkflowDefinition,
+    node: WorkflowNode,
+    input: NodeInput,
+    executionPath: string[]
+  ): Promise<WorkflowResult> {
+    if (!this.sandboxManager) {
+      return {
+        success: false,
+        error: 'Sandbox manager not initialized',
+        executionPath,
+      };
+    }
+
+    try {
+      this.emit('nodeStart', { workflow: workflow.name, node: node.name, input });
+      
+      const result = await this.sandboxManager.executeSandboxedNode(node, input, workflow.name);
+      
+      if (!result.success) {
+        const errorResult = {
+          success: false,
+          error: result.error || 'Sandbox execution failed',
+          executionPath,
+        };
+        
+        this.emit('nodeError', { workflow: workflow.name, node: node.name, error: errorResult.error });
+        return errorResult;
+      }
+
+      // Process next calls from the sandboxed execution
+      const nextCalls = result.nextCalls || [];
+      
+      if (nextCalls.length === 0) {
+        // No next calls - return current state
+        const finalResult = {
+          success: true,
+          result: input,
+          executionPath: [...executionPath, node.name],
+        };
+        
+        this.emit('nodeComplete', { workflow: workflow.name, node: node.name, result: finalResult });
+        return finalResult;
+      }
+
+      if (nextCalls.length === 1) {
+        // Single next call - execute directly
+        const call = nextCalls[0];
+        const finalResult = await this.executeNode(workflow, call.targetNode, call.data, executionPath);
+        this.emit('nodeComplete', { workflow: workflow.name, node: node.name, result: finalResult });
+        return finalResult;
+      }
+
+      // Multiple next calls - handle parallel execution  
+      const results = await this.executeParallelNextCalls(workflow, nextCalls, executionPath);
+      const finalResult = this.mergeParallelResults(results, executionPath);
+      
+      this.emit('nodeComplete', { workflow: workflow.name, node: node.name, result: finalResult });
+      return finalResult;
+
+    } catch (error) {
+      const errorResult = {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error in sandboxed node execution',
+        executionPath,
+      };
+      
+      this.emit('nodeError', { workflow: workflow.name, node: node.name, error: errorResult.error });
+      return errorResult;
+    }
+  }
+
   private mergeInputs(inputs: any[]): any {
     // Merge multiple inputs into a single input object
     // This combines all properties from all inputs
@@ -304,5 +404,24 @@ export class WorkflowEngine extends EventEmitter {
 
   getRunningExecutions(): ExecutionContext[] {
     return Array.from(this.runningExecutions.values());
+  }
+
+  /**
+   * Clean up resources including sandbox workers
+   */
+  cleanup(): void {
+    if (this.sandboxManager) {
+      this.sandboxManager.cleanup();
+    }
+  }
+
+  /**
+   * Get information about sandbox workers
+   */
+  getSandboxInfo(): { workflowName: string; created: Date }[] {
+    if (this.sandboxManager) {
+      return this.sandboxManager.getWorkerInfo();
+    }
+    return [];
   }
 }

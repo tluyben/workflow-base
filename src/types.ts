@@ -43,11 +43,13 @@ export interface WorkflowNode {
   trigger: TriggerType;
   triggerOptions?: TriggerOptions;
   function: NodeFunction;
+  sandbox?: string[]; // Array of allowed function names for Deno sandbox
 }
 
 export interface WorkflowDefinition {
   name: string;
   nodes: WorkflowNode[];
+  protectedFunctions?: { [key: string]: any }; // Functions available to sandboxed nodes (can be nested objects)
 }
 
 export interface ServeOptions {
@@ -67,4 +69,29 @@ export interface WorkflowResult {
   result?: any;
   error?: string;
   executionPath?: string[];
+}
+
+// Sandbox-related types for Deno worker system
+export interface WorkerMessage {
+  id: number;
+  method: string;
+  args: any[];
+}
+
+export interface WorkerResponse {
+  id: number;
+  result?: any;
+  error?: string;
+}
+
+export interface SandboxNodeExecution {
+  nodeName: string;
+  functionCode: string;
+  input: NodeInput;
+  allowedFunctions: string[];
+}
+
+export interface RuntimeEnvironment {
+  isDeno: boolean;
+  isNode: boolean;
 }

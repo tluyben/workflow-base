@@ -8,7 +8,9 @@ A simple yet powerful workflow backend system for Node.js with TypeScript suppor
 - **Async/Await Support**: Full async node execution with `next()` function calls  
 - **Rock-solid Server**: Uncrashable Express server with comprehensive error handling
 - **Parallel Execution**: Support for branching workflows and parallel processing
+- **🦕 Deno Sandbox**: Secure isolated execution with zero permissions (Deno only)
 - **TypeScript**: Full type safety and IntelliSense support
+- **Dual Runtime**: Works in both Node.js and Deno environments
 - **Zero Configuration**: Works out of the box with sensible defaults
 - **Comprehensive Testing**: 100% Jest test coverage
 
@@ -19,6 +21,8 @@ npm install workflow-base
 ```
 
 ## 🏃‍♂️ Quick Start
+
+### Node.js Usage
 
 ```javascript
 const workflow = require('workflow-base');
@@ -44,6 +48,71 @@ console.log('🚀 Workflow server running on http://127.0.0.1:3000');
 
 // Test it: curl "http://127.0.0.1:3000/my-lovely-workflow/start?name=Workflow"
 ```
+
+### 🦕 Deno with Sandbox Security
+
+```typescript
+// deno-secure.ts
+import workflow from 'workflow-base';
+
+// Define functions available to sandboxed nodes
+const protectedFunctions = {
+  log: (...args: any[]) => console.log('[SANDBOX]', ...args),
+  math: {
+    square: (n: number) => n * n,
+    add: (a: number, b: number) => a + b,
+  },
+  storage: {
+    data: {} as any,
+    set: async (key: string, value: any) => storage.data[key] = value,
+    get: async (key: string) => storage.data[key],
+  },
+};
+
+const secureWorkflow = workflow.createWorkflow('secure-calc', {
+  nodes: [
+    {
+      name: 'start',
+      trigger: 'rest',
+      triggerOptions: { method: 'GET' },
+      function: async (input, next) => {
+        const a = parseFloat(input.a) || 0;
+        const b = parseFloat(input.b) || 0;
+        await next('calculate', { a, b });
+      },
+    },
+    {
+      name: 'calculate',
+      trigger: 'workflow',
+      function: async (input, next) => {
+        // 🔒 This runs in isolated worker with ZERO permissions
+        log('Processing numbers:', input.a, input.b);
+        const sum = math.add(input.a, input.b);
+        const square = math.square(sum);
+        
+        await storage.set('lastCalculation', { sum, square });
+        log('Results:', { sum, square });
+        
+        await next(next.SUCCESS, { sum, square });
+      },
+      sandbox: ['log', 'math.add', 'math.square', 'storage.set'], // Only these functions allowed
+    },
+  ],
+  protectedFunctions, // Provide controlled API to sandboxed nodes
+});
+
+await workflow.serve({ port: 3000 });
+```
+
+Run with: `deno run --allow-net --allow-read deno-secure.ts`
+
+**🛡️ Sandbox Features:**
+- Zero file system access
+- Zero network access  
+- Zero environment access
+- Only approved functions callable
+- Automatic worker cleanup
+- Crash isolation
 
 ## 📚 Core Concepts
 
@@ -262,19 +331,94 @@ npm run build         # Compile TypeScript
 npm run lint          # Run linter
 ```
 
+## 🦕 Deno Sandbox Security
+
+### Why Use Sandboxed Workflows?
+
+When building workflows that process user input or execute dynamic code, security is paramount. The Deno sandbox feature provides:
+
+- **Complete Isolation**: Each sandboxed node runs in a separate worker with zero permissions
+- **Controlled API**: Only explicitly allowed functions are accessible
+- **Crash Protection**: Sandbox failures don't affect the main server
+- **Resource Limits**: Built-in protection against infinite loops and memory exhaustion
+
+### Sandbox Configuration
+
+```typescript
+const workflow = workflow.createWorkflow('sandbox-example', {
+  nodes: [
+    {
+      name: 'untrusted-code',
+      trigger: 'workflow',
+      function: async (input, next) => {
+        // This code runs in complete isolation
+        // Cannot access file system, network, or global variables
+        // Only functions listed in 'sandbox' array are available
+        
+        const result = await database.query('SELECT * FROM users');
+        logger.info('Query executed:', result.length, 'rows');
+        
+        await next(next.SUCCESS, { count: result.length });
+      },
+      sandbox: ['database.query', 'logger.info'], // Whitelist of allowed functions
+    },
+  ],
+  protectedFunctions: {
+    database: {
+      query: async (sql) => {
+        // Your controlled database access with validation, rate limiting, etc.
+        return await db.query(sql);
+      },
+    },
+    logger: {
+      info: (...args) => console.log('[SANDBOX]', ...args),
+    },
+  },
+});
+```
+
+### Available NPM Scripts
+
+```bash
+# Node.js examples
+npm run start:node        # Node.js compatibility example
+npm run build && node examples/basic-usage.js
+
+# Deno examples (requires Deno installed)
+npm run deno              # Basic Deno sandbox example
+npm run deno:advanced     # Advanced sandbox with security features
+npm run test:deno         # Run Deno-specific tests
+
+# Testing
+npm test                  # Node.js tests
+npm run test:deno         # Deno sandbox tests
+```
+
 ## 📁 Examples
 
-Check the `/examples` directory for complete working examples:
+Check the directories for complete working examples:
 
-- `basic-usage.js` - REST API workflows
+### Node.js Examples (`/examples`)
+- `basic-usage.js` - REST API workflows with parallel execution
 - `cron-workflow.js` - Scheduled task examples  
 - `interval-workflow.js` - Repeated task examples
 - `programmatic-usage.js` - Using workflows without server
 
+### Deno Examples (`/examples/deno`) 
+- `basic-deno.ts` - Simple sandbox workflow
+- `advanced-sandbox.ts` - Security features, rate limiting, validation
+- `node-compatibility.js` - Shows Node.js behavior with sandbox features
+
 Run them with:
 ```bash
-npm run build  # First compile
+# Node.js
+npm run build
 node examples/basic-usage.js
+
+# Deno
+npm run deno
+# or
+deno run --allow-net --allow-read examples/deno/basic-deno.ts
 ```
 
 ## 🔒 Error Handling
@@ -303,8 +447,13 @@ await next(next.ERROR, { message: 'Validation failed' });
 
 ## 📋 Requirements
 
+### Node.js (Standard Features)
 - Node.js 14+ 
 - TypeScript 4.5+ (for development)
+
+### Deno (Sandbox Features)
+- Deno 1.40+ (for sandbox security features)
+- Use `--allow-net --allow-read` permissions when running Deno workflows
 
 ## 📄 License
 

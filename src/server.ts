@@ -302,6 +302,7 @@ export class WorkflowServer {
       }
 
       this.triggerManager.stop();
+      this.workflowEngine.cleanup(); // Clean up sandbox workers
       
       this.server.close(() => {
         this.isRunning = false;
