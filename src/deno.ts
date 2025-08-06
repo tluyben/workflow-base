@@ -1,9 +1,10 @@
-import { WorkflowServer } from './server';
-import { WorkflowEngine } from './workflow-engine';
-import { TriggerManager } from './trigger-manager';
+// Deno-specific entry point that imports the ES modules directly
+import { WorkflowServer } from './server.ts';
+import { WorkflowEngine } from './workflow-engine.ts';
+import { TriggerManager } from './trigger-manager.ts';
 
 // Export types
-export * from './types';
+export * from './types.ts';
 
 // Export main classes
 export { WorkflowServer, WorkflowEngine, TriggerManager };

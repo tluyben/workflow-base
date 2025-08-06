@@ -7,12 +7,18 @@ const api = createRemoteApi((message) => {
   (globalThis as any).postMessage(message);
 });
 
-// Handle execution requests from parent
+// Store the original onmessage from createRemoteApi
+const proxyMessageHandler = (globalThis as any).onmessage;
+
+// Handle all messages - both API responses and execution requests
 (globalThis as any).onmessage = async (e: any) => {
   const data = e.data;
   
-  // Skip if this is a response message (handled by createRemoteApi)
+  // If this is an API response message (has id and result/error), let the proxy handle it
   if (data.id !== undefined && (data.result !== undefined || data.error !== undefined)) {
+    if (proxyMessageHandler) {
+      proxyMessageHandler(e);
+    }
     return;
   }
 
@@ -56,8 +62,10 @@ async function executeNodeFunction(execution: SandboxNodeExecution): Promise<any
       const finalPart = parts[parts.length - 1];
       current[finalPart] = (...args: any[]) => (api as any)[funcName](...args);
     } else {
-      // Direct function
-      sandbox[funcName] = (...args: any[]) => (api as any)[funcName](...args);
+      // Direct function  
+      sandbox[funcName] = (...args: any[]) => {
+        return (api as any)[funcName](...args);
+      };
     }
   }
 

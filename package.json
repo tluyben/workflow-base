@@ -20,9 +20,9 @@
     "lint:fix": "eslint src/**/*.ts --fix",
     "start": "node dist/index.js",
     "start:node": "node examples/deno/node-compatibility.js",
-    "deno": "npm run build && deno run --allow-net --allow-read examples/deno/basic-deno.ts",
-    "deno:advanced": "npm run build && deno run --allow-net --allow-read examples/deno/advanced-sandbox.ts",
-    "test:deno": "npm run build && deno test --allow-net --allow-read tests/deno/",
+    "deno": "deno run --allow-net --allow-read --allow-env examples/deno/basic-deno.ts",
+    "deno:advanced": "deno run --allow-net --allow-read --allow-env examples/deno/advanced-sandbox.ts",
+    "test:deno": "deno test --allow-net --allow-read --allow-env --unstable-worker-options tests/deno/",
     "prepublishOnly": "npm run build && npm test",
     "prepack": "npm run build"
   },

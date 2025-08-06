@@ -1,15 +1,21 @@
 {
   "compilerOptions": {
-    "allowImportingTsExtensions": true,
-    "noEmit": true,
     "strict": true,
-    "lib": ["es2022", "dom"]
+    "lib": ["es2022", "dom", "deno.ns"]
   },
   "tasks": {
-    "start": "deno run --allow-net --allow-read examples/deno/basic-deno.ts",
-    "test": "deno test --allow-net --allow-read tests/deno/"
+    "start": "deno run --allow-net --allow-read --allow-env examples/deno/basic-deno.ts",
+    "test": "deno test --allow-net --allow-read --allow-env tests/deno/"
   },
   "imports": {
-    "@std/": "https://deno.land/std@0.224.0/"
+    "@std/": "https://deno.land/std@0.224.0/",
+    "./src/types": "./src/types.ts",
+    "./src/server": "./src/server.ts",
+    "./src/workflow-engine": "./src/workflow-engine.ts",
+    "./src/trigger-manager": "./src/trigger-manager.ts",
+    "./src/sandbox-manager": "./src/sandbox-manager.ts",
+    "./src/worker-proxy": "./src/worker-proxy.ts",
+    "./src/runtime": "./src/runtime.ts",
+    "./src/worker": "./src/worker.ts"
   }
 }

@@ -1,5 +1,5 @@
 // Basic Deno example with sandbox functionality
-import workflow from '../../dist/index.js';
+import workflow from '../../src/deno.ts';
 
 // Define protected functions that sandboxed nodes can access
 const protectedFunctions = {

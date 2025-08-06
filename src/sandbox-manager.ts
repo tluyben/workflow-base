@@ -115,8 +115,11 @@ export class SandboxManager {
 
       try {
         // Create new worker with no permissions (Deno-specific)
-        // Use a relative path that works in Deno
-        const workerUrl = './worker.ts';
+        // Since we're only running in Deno at this point, use Deno-specific path resolution
+        const currentUrl = (globalThis as any).import?.meta?.url || 
+                          new Error().stack?.match(/file:\/\/[^\s)]+/)?.[0] || 
+                          'file:///src/sandbox-manager.ts';
+        const workerUrl = new URL('./worker.ts', currentUrl).href;
         const WorkerClass = (globalThis as any).Worker;
         
         worker = new WorkerClass(workerUrl, {
@@ -128,7 +131,13 @@ export class SandboxManager {
 
         // Set up message handling for this worker
         worker.onmessage = (e: any) => {
-          this.dispatcher.handleMessage(worker!, e.data);
+          const data = e.data;
+          
+          // If it's an API call (has id and method), route to dispatcher
+          if (data.id !== undefined && data.method !== undefined) {
+            this.dispatcher.handleMessage(worker!, data);
+          }
+          // Otherwise, it's an execution result - handled by the execution promise
         };
 
         // Handle worker errors

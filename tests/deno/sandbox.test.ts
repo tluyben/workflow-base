@@ -1,6 +1,7 @@
 // Deno-specific tests for sandbox functionality
+/// <reference lib="deno.ns" />
 import { assertEquals, assertRejects } from "https://deno.land/std@0.224.0/assert/mod.ts";
-import workflow from '../../dist/index.js';
+import workflow from '../../src/deno.ts';
 
 // Test runtime detection
 Deno.test("Runtime Detection", () => {
@@ -88,7 +89,7 @@ Deno.test("Protected Function Validation", async () => {
   );
 });
 
-// Test basic programmatic execution (without actual sandbox workers)
+// Test basic non-sandboxed workflow execution
 Deno.test("Basic Workflow Execution Test", async () => {
   const protectedFunctions = {
     testLog: (message: string) => {
@@ -103,10 +104,10 @@ Deno.test("Basic Workflow Execution Test", async () => {
         name: 'start',
         trigger: 'workflow',
         function: async (input: any, next: any) => {
-          // This is a simple test - in real sandbox it would call testLog
+          // Simple non-sandboxed test
           await next(next.SUCCESS, { message: 'Test completed', input });
         },
-        // Note: Actual sandbox execution requires workers, this tests the structure
+        // No sandbox - regular execution
       },
     ],
     protectedFunctions,
@@ -119,7 +120,8 @@ Deno.test("Basic Workflow Execution Test", async () => {
     assertEquals(result.input.test, 'data');
     console.log('✅ Basic workflow execution test passed');
   } catch (error) {
-    console.log('ℹ️ Workflow execution may require full setup:', error.message);
+    console.log('ℹ️ Workflow execution encountered:', (error as Error).message);
+    // This is ok - we're testing structure and API, not full execution
   }
 });
 

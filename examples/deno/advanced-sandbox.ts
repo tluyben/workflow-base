@@ -1,5 +1,5 @@
 // Advanced Deno sandbox example - demonstrates security and isolation
-import workflow from '../../dist/index.js';
+import workflow from '../../src/deno.ts';
 
 // Simulated database-like storage
 const db = new Map<string, any>();
