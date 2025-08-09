@@ -13,6 +13,7 @@ This document provides comprehensive information about the workflow-base package
 - **Rock-solid Express Server**: Uncrashable server with comprehensive error handling
 - **Async Node Execution**: Full support for async/await patterns with `next()` function
 - **Parallel Execution**: Support for branching workflows and parallel processing
+- **Workflow Logging**: Optional logging callback to capture execution details, console output, and errors
 - **Dual Runtime Support**: Works in both Node.js and Deno environments
 - **TypeScript Support**: Full type safety and IntelliSense support
 - **Comprehensive Testing**: 100% Jest test coverage + Deno-specific tests
@@ -68,7 +69,11 @@ const myWorkflow = workflow.createWorkflow('workflow-name', {
         await next(next.ERROR, errorData);    // End with error
       }
     }
-  ]
+  ],
+  logger: (logEntry) => {              // Optional: logging callback
+    // Called for each node execution
+    console.log(logEntry);
+  }
 });
 ```
 
@@ -115,6 +120,51 @@ All node functions receive an `input` object containing:
   customData: 'from previous node'
 }
 ```
+
+### Workflow Logging
+
+The optional `logger` parameter allows you to monitor workflow execution, capture console output, and track errors:
+
+```javascript
+const logger = (logEntry) => {
+  // LogEntry structure:
+  // {
+  //   workflowName: string,     // Name of the workflow
+  //   nodeName: string,         // Name of the node being executed
+  //   input: any,               // Input data received by the node
+  //   output?: any,             // Output data (next() calls made)
+  //   console?: string[],       // Captured console output
+  //   exception?: any,          // Exception if node crashed
+  //   timestamp: Date,          // When node was executed
+  //   duration?: number         // Execution time in milliseconds
+  // }
+  
+  // Example: Send to logging service
+  await loggingService.send({
+    workflow: logEntry.workflowName,
+    node: logEntry.nodeName,
+    duration: logEntry.duration,
+    status: logEntry.exception ? 'error' : 'success',
+    error: logEntry.exception?.message,
+    console: logEntry.console
+  });
+  
+  // Example: Save to database
+  await db.logs.insert({
+    ...logEntry,
+    timestamp: logEntry.timestamp.toISOString()
+  });
+};
+
+const workflow = workflow.createWorkflow('monitored-workflow', {
+  nodes: [...],
+  logger: logger
+});
+```
+
+**Console Capture**: When a logger is provided, all console methods (`log`, `error`, `warn`, `info`) are captured during node execution and included in the log entry.
+
+**Performance Impact**: Logging has minimal performance impact. Console capture only occurs when a logger is provided.
 
 ## Example Workflows
 
@@ -480,6 +530,14 @@ workflow-base/
 Set `NODE_ENV=development` for verbose error messages and stack traces.
 
 ## Version History
+
+- **1.2.0**: Workflow Logging Release
+  - Added optional logging callback to `createWorkflow()`
+  - Capture console output (log, error, warn, info) during node execution
+  - Track node execution duration and timestamps
+  - Log exceptions with full stack traces
+  - Support for logging in both sequential and parallel execution
+  - Comprehensive test coverage for logging functionality
 
 - **1.1.0**: 🦕 Deno Sandbox Security Release
   - Added secure isolated worker execution for Deno runtime

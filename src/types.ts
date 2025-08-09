@@ -50,6 +50,7 @@ export interface WorkflowDefinition {
   name: string;
   nodes: WorkflowNode[];
   protectedFunctions?: { [key: string]: any }; // Functions available to sandboxed nodes (can be nested objects)
+  logger?: LoggerFunction; // Optional logging callback
 }
 
 export interface ServeOptions {
@@ -95,3 +96,16 @@ export interface RuntimeEnvironment {
   isDeno: boolean;
   isNode: boolean;
 }
+
+export interface LogEntry {
+  workflowName: string;
+  nodeName: string;
+  input: any;
+  output?: any;
+  console?: string[];
+  exception?: any;
+  timestamp: Date;
+  duration?: number;
+}
+
+export type LoggerFunction = (logEntry: LogEntry) => void;

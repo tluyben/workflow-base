@@ -272,6 +272,231 @@ describe('WorkflowEngine', () => {
     });
   });
 
+  describe('logging functionality', () => {
+    it('should call logger for each node execution', async () => {
+      const logEntries: any[] = [];
+      const logger = jest.fn((entry) => {
+        logEntries.push(entry);
+      });
+
+      engine.createWorkflow('logged-workflow', {
+        nodes: [
+          {
+            name: 'start',
+            trigger: 'rest',
+            triggerOptions: { method: 'GET' },
+            function: async (input: NodeInput, next: NextFunction) => {
+              await next('second', { value: 'from-start' });
+            },
+          },
+          {
+            name: 'second',
+            trigger: 'workflow',
+            function: async (input: NodeInput, next: NextFunction) => {
+              await next(next.SUCCESS, { final: 'result' });
+            },
+          },
+        ],
+        logger,
+      });
+
+      await engine.executeWorkflow('logged-workflow', { initial: 'input' });
+
+      expect(logger).toHaveBeenCalledTimes(2);
+      expect(logEntries).toHaveLength(2);
+      
+      // Check first node log
+      expect(logEntries[0].workflowName).toBe('logged-workflow');
+      expect(logEntries[0].nodeName).toBe('start');
+      expect(logEntries[0].input).toEqual({ initial: 'input' });
+      expect(logEntries[0].output).toEqual([{ target: 'second', data: { value: 'from-start' } }]);
+      expect(logEntries[0].timestamp).toBeInstanceOf(Date);
+      expect(logEntries[0].duration).toBeGreaterThanOrEqual(0);
+      
+      // Check second node log
+      expect(logEntries[1].workflowName).toBe('logged-workflow');
+      expect(logEntries[1].nodeName).toBe('second');
+      expect(logEntries[1].input).toEqual({ value: 'from-start' });
+      expect(logEntries[1].output).toEqual([{ target: 'SUCCESS', data: { final: 'result' } }]);
+    });
+
+    it('should capture console output when logger is provided', async () => {
+      const logEntries: any[] = [];
+      const logger = jest.fn((entry) => {
+        logEntries.push(entry);
+      });
+
+      engine.createWorkflow('console-workflow', {
+        nodes: [
+          {
+            name: 'start',
+            trigger: 'rest',
+            triggerOptions: { method: 'GET' },
+            function: async (input: NodeInput, next: NextFunction) => {
+              console.log('This is a log message');
+              console.error('This is an error');
+              console.warn('This is a warning');
+              console.info('This is info');
+              await next(next.SUCCESS, { done: true });
+            },
+          },
+        ],
+        logger,
+      });
+
+      await engine.executeWorkflow('console-workflow', {});
+
+      expect(logger).toHaveBeenCalledTimes(1);
+      expect(logEntries[0].console).toContain('[log] This is a log message');
+      expect(logEntries[0].console).toContain('[error] This is an error');
+      expect(logEntries[0].console).toContain('[warn] This is a warning');
+      expect(logEntries[0].console).toContain('[info] This is info');
+    });
+
+    it('should capture exceptions in logger', async () => {
+      const logEntries: any[] = [];
+      const logger = jest.fn((entry) => {
+        logEntries.push(entry);
+      });
+
+      engine.createWorkflow('error-workflow', {
+        nodes: [
+          {
+            name: 'start',
+            trigger: 'rest',
+            triggerOptions: { method: 'GET' },
+            function: async (input: NodeInput, next: NextFunction) => {
+              console.log('About to throw error');
+              throw new Error('Test error message');
+            },
+          },
+        ],
+        logger,
+      });
+
+      const result = await engine.executeWorkflow('error-workflow', {});
+
+      expect(result.success).toBe(false);
+      expect(logger).toHaveBeenCalledTimes(1);
+      expect(logEntries[0].exception).toBeDefined();
+      expect(logEntries[0].exception.message).toBe('Test error message');
+      expect(logEntries[0].exception.stack).toBeDefined();
+      expect(logEntries[0].console).toContain('[log] About to throw error');
+    });
+
+    it('should handle parallel node execution logging', async () => {
+      const logEntries: any[] = [];
+      const logger = jest.fn((entry) => {
+        logEntries.push(entry);
+      });
+
+      engine.createWorkflow('parallel-logged', {
+        nodes: [
+          {
+            name: 'start',
+            trigger: 'rest',
+            triggerOptions: { method: 'GET' },
+            function: async (input: NodeInput, next: NextFunction) => {
+              await next('branch1', { value: 1 });
+              await next('branch2', { value: 2 });
+            },
+          },
+          {
+            name: 'branch1',
+            trigger: 'workflow',
+            function: async (input: NodeInput, next: NextFunction) => {
+              console.log('Branch 1 executing');
+              await next('merge', { from: 'branch1', data: input.value });
+            },
+          },
+          {
+            name: 'branch2',
+            trigger: 'workflow',
+            function: async (input: NodeInput, next: NextFunction) => {
+              console.log('Branch 2 executing');
+              await next('merge', { from: 'branch2', data: input.value });
+            },
+          },
+          {
+            name: 'merge',
+            trigger: 'workflow',
+            function: async (input: NodeInput, next: NextFunction) => {
+              console.log('Merge node executing');
+              await next(next.SUCCESS, input);
+            },
+          },
+        ],
+        logger,
+      });
+
+      await engine.executeWorkflow('parallel-logged', {});
+
+      // Should have logs for all nodes
+      expect(logger).toHaveBeenCalled();
+      const nodeNames = logEntries.map(e => e.nodeName);
+      expect(nodeNames).toContain('start');
+      expect(nodeNames).toContain('branch1');
+      expect(nodeNames).toContain('branch2');
+      expect(nodeNames).toContain('merge');
+      
+      // Check that parallel branches were logged
+      const startLog = logEntries.find(e => e.nodeName === 'start');
+      expect(startLog.output).toHaveLength(2);
+      expect(startLog.output).toContainEqual({ target: 'branch1', data: { value: 1 } });
+      expect(startLog.output).toContainEqual({ target: 'branch2', data: { value: 2 } });
+    });
+
+    it('should not affect workflow execution when logger is not provided', async () => {
+      engine.createWorkflow('no-logger-workflow', {
+        nodes: [
+          {
+            name: 'start',
+            trigger: 'rest',
+            triggerOptions: { method: 'GET' },
+            function: async (input: NodeInput, next: NextFunction) => {
+              console.log('This should work normally');
+              await next(next.SUCCESS, { result: 'success' });
+            },
+          },
+        ],
+        // No logger provided
+      });
+
+      const result = await engine.executeWorkflow('no-logger-workflow', {});
+      
+      expect(result.success).toBe(true);
+      expect(result.result).toEqual({ result: 'success' });
+    });
+
+    it('should measure execution duration accurately', async () => {
+      const logEntries: any[] = [];
+      const logger = jest.fn((entry) => {
+        logEntries.push(entry);
+      });
+
+      engine.createWorkflow('timed-workflow', {
+        nodes: [
+          {
+            name: 'start',
+            trigger: 'rest',
+            triggerOptions: { method: 'GET' },
+            function: async (input: NodeInput, next: NextFunction) => {
+              // Simulate some work
+              await new Promise(resolve => setTimeout(resolve, 50));
+              await next(next.SUCCESS, {});
+            },
+          },
+        ],
+        logger,
+      });
+
+      await engine.executeWorkflow('timed-workflow', {});
+
+      expect(logEntries[0].duration).toBeGreaterThanOrEqual(50);
+      expect(logEntries[0].duration).toBeLessThan(200); // Should not take too long
+    });
+  });
+
   describe('workflow management', () => {
     it('should retrieve workflow by name', () => {
       const originalWorkflow = engine.createWorkflow('test-workflow', {

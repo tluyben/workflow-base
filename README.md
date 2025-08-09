@@ -9,6 +9,7 @@ A simple yet powerful workflow backend system for Node.js with TypeScript suppor
 - **Rock-solid Server**: Uncrashable Express server with comprehensive error handling
 - **Parallel Execution**: Support for branching workflows and parallel processing
 - **🦕 Deno Sandbox**: Secure isolated execution with zero permissions (Deno only)
+- **Workflow Logging**: Optional logging callback to capture execution details, console output, and errors
 - **TypeScript**: Full type safety and IntelliSense support
 - **Dual Runtime**: Works in both Node.js and Deno environments
 - **Zero Configuration**: Works out of the box with sensible defaults
@@ -269,6 +270,78 @@ workflow.createWorkflow('health-check', {
   ]
 });
 ```
+
+### Workflow Logging
+
+Track and monitor your workflow execution with the optional logging feature:
+
+```javascript
+// Define a custom logger function
+const logger = (logEntry) => {
+  console.log(`[${logEntry.timestamp.toISOString()}] ${logEntry.workflowName}/${logEntry.nodeName}`);
+  console.log(`  Input: ${JSON.stringify(logEntry.input)}`);
+  console.log(`  Output: ${JSON.stringify(logEntry.output)}`);
+  console.log(`  Duration: ${logEntry.duration}ms`);
+  
+  // Capture console output from the node
+  if (logEntry.console?.length > 0) {
+    console.log('  Console Output:');
+    logEntry.console.forEach(line => console.log(`    ${line}`));
+  }
+  
+  // Handle exceptions
+  if (logEntry.exception) {
+    console.error(`  ERROR: ${logEntry.exception.message}`);
+  }
+  
+  // Send to your logging service
+  // await sendToDatadog(logEntry);
+  // await saveToDatabase(logEntry);
+};
+
+// Create workflow with logging
+workflow.createWorkflow('monitored-workflow', {
+  nodes: [
+    {
+      name: 'start',
+      trigger: 'rest',
+      triggerOptions: { method: 'POST' },
+      function: async (input, next) => {
+        console.log('Processing request...'); // This will be captured
+        console.warn('Validation warning');   // This too!
+        
+        if (!input.data) {
+          throw new Error('Missing required data'); // Exception captured
+        }
+        
+        await next('process', { data: input.data });
+      }
+    },
+    {
+      name: 'process',
+      trigger: 'workflow',
+      function: async (input, next) => {
+        console.log('Processing data:', input.data);
+        const result = await processData(input.data);
+        await next(next.SUCCESS, { result });
+      }
+    }
+  ],
+  logger: logger // Attach the logger
+});
+```
+
+#### Log Entry Structure
+
+Each log entry contains:
+- `workflowName`: Name of the workflow
+- `nodeName`: Name of the node being executed
+- `input`: Input data received by the node
+- `output`: Output data (next() calls made)
+- `console`: Array of captured console output
+- `exception`: Exception details if node crashed
+- `timestamp`: When the node was executed
+- `duration`: Execution time in milliseconds
 
 ## 🔧 API Reference
 

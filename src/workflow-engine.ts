@@ -6,6 +6,7 @@ import {
   NextFunction,
   ExecutionContext,
   WorkflowResult,
+  LogEntry,
 } from './types';
 import { SandboxManager } from './sandbox-manager';
 import { detectRuntime, logRuntime } from './runtime';
@@ -152,6 +153,36 @@ export class WorkflowEngine extends EventEmitter {
     nextFunction.SUCCESS = 'SUCCESS';
     nextFunction.ERROR = 'ERROR';
 
+    // Capture console output
+    const consoleOutput: string[] = [];
+    const originalConsole = {
+      log: console.log,
+      error: console.error,
+      warn: console.warn,
+      info: console.info,
+    };
+    
+    // Override console methods to capture output
+    const captureConsole = (method: string) => (...args: any[]) => {
+      const message = args.map(arg => 
+        typeof arg === 'object' ? JSON.stringify(arg) : String(arg)
+      ).join(' ');
+      consoleOutput.push(`[${method}] ${message}`);
+      // Still output to original console
+      (originalConsole as any)[method](...args);
+    };
+    
+    if (workflow.logger) {
+      console.log = captureConsole('log');
+      console.error = captureConsole('error');
+      console.warn = captureConsole('warn');
+      console.info = captureConsole('info');
+    }
+    
+    const startTime = Date.now();
+    let nodeOutput: any = undefined;
+    let nodeException: any = undefined;
+    
     try {
       this.emit('nodeStart', { workflow: workflow.name, node: nodeName, input });
       
@@ -159,25 +190,75 @@ export class WorkflowEngine extends EventEmitter {
       await node.function(input, nextFunction);
       nodeExecutionComplete = true;
       
+      // Capture output data from next calls
+      if (nextCalls.length > 0) {
+        nodeOutput = nextCalls.map(call => ({ target: call.targetNode, data: call.data }));
+      }
+      
       // Now execute all next() calls in parallel
       if (nextCalls.length === 0) {
         // No next calls - return current state
-        return {
+        const result = {
           success: true,
           result: input,
           executionPath: newExecutionPath,
         };
+        
+        // Call logger before returning
+        if (workflow.logger) {
+          const logEntry: LogEntry = {
+            workflowName: workflow.name,
+            nodeName,
+            input,
+            output: nodeOutput,
+            console: consoleOutput,
+            timestamp: new Date(),
+            duration: Date.now() - startTime,
+          };
+          workflow.logger(logEntry);
+        }
+        
+        return result;
       }
 
       if (nextCalls.length === 1) {
         // Single next call - execute directly
         const call = nextCalls[0];
+        
+        // Call logger before executing next node
+        if (workflow.logger) {
+          const logEntry: LogEntry = {
+            workflowName: workflow.name,
+            nodeName,
+            input,
+            output: nodeOutput,
+            console: consoleOutput,
+            timestamp: new Date(),
+            duration: Date.now() - startTime,
+          };
+          workflow.logger(logEntry);
+        }
+        
         const result = await this.executeNode(workflow, call.targetNode, call.data, newExecutionPath);
         this.emit('nodeComplete', { workflow: workflow.name, node: nodeName, result });
         return result;
       }
 
-      // Multiple next calls - handle parallel execution  
+      // Multiple next calls - handle parallel execution
+      // Call logger before executing parallel nodes
+      if (workflow.logger) {
+        const logEntry: LogEntry = {
+          workflowName: workflow.name,
+          nodeName,
+          input,
+          output: nodeOutput,
+          console: consoleOutput,
+          timestamp: new Date(),
+          duration: Date.now() - startTime,
+        };
+        workflow.logger(logEntry);
+      }
+      
       const results = await this.executeParallelNextCalls(workflow, nextCalls, newExecutionPath);
       const finalResult = this.mergeParallelResults(results, newExecutionPath);
       
@@ -185,15 +266,40 @@ export class WorkflowEngine extends EventEmitter {
       return finalResult;
 
     } catch (error) {
+      nodeException = error;
+      
       const errorResult = {
         success: false,
         error: error instanceof Error ? error.message : 'Unknown error in node execution',
         executionPath: newExecutionPath,
       };
       
+      // Call logger with exception
+      if (workflow.logger) {
+        const logEntry: LogEntry = {
+          workflowName: workflow.name,
+          nodeName,
+          input,
+          output: nodeOutput,
+          console: consoleOutput,
+          exception: error instanceof Error ? { message: error.message, stack: error.stack } : error,
+          timestamp: new Date(),
+          duration: Date.now() - startTime,
+        };
+        workflow.logger(logEntry);
+      }
+      
       this.emit('nodeError', { workflow: workflow.name, node: nodeName, error: errorResult.error });
       
       return errorResult;
+    } finally {
+      // Restore original console methods
+      if (workflow.logger) {
+        console.log = originalConsole.log;
+        console.error = originalConsole.error;
+        console.warn = originalConsole.warn;
+        console.info = originalConsole.info;
+      }
     }
   }
 
@@ -217,6 +323,33 @@ export class WorkflowEngine extends EventEmitter {
         throw new Error(`Node '${branchName}' not found`);
       }
       
+      // Set up console capture for logging
+      const consoleOutput: string[] = [];
+      const originalConsole = {
+        log: console.log,
+        error: console.error,
+        warn: console.warn,
+        info: console.info,
+      };
+      
+      const captureConsole = (method: string) => (...args: any[]) => {
+        const message = args.map(arg => 
+          typeof arg === 'object' ? JSON.stringify(arg) : String(arg)
+        ).join(' ');
+        consoleOutput.push(`[${method}] ${message}`);
+        (originalConsole as any)[method](...args);
+      };
+      
+      if (workflow.logger) {
+        console.log = captureConsole('log');
+        console.error = captureConsole('error');
+        console.warn = captureConsole('warn');
+        console.info = captureConsole('info');
+      }
+      
+      const startTime = Date.now();
+      let nodeException: any = undefined;
+      
       // Execute the branch but capture what it wants to call next
       const capturedNextCalls: { targetNode: string; data: any }[] = [];
       
@@ -233,8 +366,51 @@ export class WorkflowEngine extends EventEmitter {
       interceptingNextFunction.SUCCESS = 'SUCCESS';
       interceptingNextFunction.ERROR = 'ERROR';
       
-      // Execute the branch node with our intercepting next function
-      await node.function(call.data, interceptingNextFunction as any);
+      try {
+        // Execute the branch node with our intercepting next function
+        await node.function(call.data, interceptingNextFunction as any);
+        
+        // Call logger for this branch node
+        if (workflow.logger) {
+          const logEntry: LogEntry = {
+            workflowName: workflow.name,
+            nodeName: branchName,
+            input: call.data,
+            output: capturedNextCalls.length > 0 ? capturedNextCalls : undefined,
+            console: consoleOutput,
+            timestamp: new Date(),
+            duration: Date.now() - startTime,
+          };
+          workflow.logger(logEntry);
+        }
+      } catch (error) {
+        nodeException = error;
+        
+        // Call logger with exception
+        if (workflow.logger) {
+          const logEntry: LogEntry = {
+            workflowName: workflow.name,
+            nodeName: branchName,
+            input: call.data,
+            output: capturedNextCalls.length > 0 ? capturedNextCalls : undefined,
+            console: consoleOutput,
+            exception: error instanceof Error ? { message: error.message, stack: error.stack } : error,
+            timestamp: new Date(),
+            duration: Date.now() - startTime,
+          };
+          workflow.logger(logEntry);
+        }
+        
+        throw error; // Re-throw to maintain error handling
+      } finally {
+        // Restore console
+        if (workflow.logger) {
+          console.log = originalConsole.log;
+          console.error = originalConsole.error;
+          console.warn = originalConsole.warn;
+          console.info = originalConsole.info;
+        }
+      }
       
       return { branchName, capturedNextCalls };
     });
